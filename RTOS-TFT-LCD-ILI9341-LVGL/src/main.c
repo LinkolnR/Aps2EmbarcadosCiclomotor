@@ -25,6 +25,13 @@ static void MAG_init(void);
 static void task_mag(void *pvParameters);
 static void mag_callback(void);
 
+typedef struct 
+{
+	float velocity;
+	float previus_velocity;
+	float acceleration;
+} bike_t;
+
 /************************************************************************/
 /* LCD / LVGL                                                           */
 /************************************************************************/
@@ -334,17 +341,30 @@ static void task_lcd(void *pvParameters) {
 static void task_mag(void *pvParameters)
 {
 	MAG_init();
-	rtt_init(RTT, 32 * 1024);
+	rtt_init(RTT, 32);
 	
 	uint32_t ul_previous_time;
+	bike_t bike;
+	bike.velocity = 0;
+	bike.previus_velocity = 0;
+	
+	float RADIUS = 0.20;
+	float PI = 3.14159265358979f; 
 	
 	for (;;)
 	{
 		if (xQueueReceive(xQueueMAG, &ul_previous_time, (TickType_t) 100))
 		{
-			uint32_t period = ul_previous_time;
-			printf("Period: %.10f\nUL_PREV_TIME: %u\n", period, ul_previous_time);
+			float period = (float) ul_previous_time / 1024;
+			printf("Period: %.4f\nUL_PREV_TIME: %u\n", period, ul_previous_time);
 			rtt_init(RTT, 32);
+			float frequency = 1.0 / period;
+			bike.previus_velocity = bike.velocity;
+			bike.velocity = 2 * PI * frequency * RADIUS;
+			
+			bike.acceleration = bike.velocity - bike.previus_velocity / period;
+			
+			printf("Velocidade: %.4f\nAceleração: %.4f\n\n", bike.velocity, bike.acceleration);
 		}
 	}
 }
