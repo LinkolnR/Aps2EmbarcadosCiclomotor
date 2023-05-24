@@ -14,6 +14,16 @@ LV_FONT_DECLARE(dseg30);
 LV_FONT_DECLARE(dseg45);
 LV_FONT_DECLARE(dseg60);
 
+#define MAG_PIO           PIOA
+#define MAG_PIO_ID        ID_PIOA
+#define MAG_PIO_IDX       11
+#define MAG_PIO_IDX_MASK  (1u << MAG_PIO_IDX)
+
+QueueHandle_t xQueueMAG;
+
+static void MAG_init(void);
+static void task_mag(void *pvParameters);
+static void mag_callback(void);
 
 /************************************************************************/
 /* LCD / LVGL                                                           */
@@ -172,6 +182,14 @@ static void handler_refresh(lv_event_t * e) {
 	}
 }
 
+static void mag_callback(void)
+{
+	static uint32_t ul_previous_time;
+	ul_previous_time = rtt_read_timer_value(RTT);
+	BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+	xQueueSendFromISR(xQueueMAG, &ul_previous_time, xHigherPriorityTaskWoken);
+}
+
 void lv_ex_btn_1(void) {
 	
 	static lv_style_t style;
@@ -313,6 +331,24 @@ static void task_lcd(void *pvParameters) {
 	}
 }
 
+static void task_mag(void *pvParameters)
+{
+	MAG_init();
+	rtt_init(RTT, 32 * 1024);
+	
+	uint32_t ul_previous_time;
+	
+	for (;;)
+	{
+		if (xQueueReceive(xQueueMAG, &ul_previous_time, (TickType_t) 100))
+		{
+			uint32_t period = ul_previous_time;
+			printf("Period: %.10f\nUL_PREV_TIME: %u\n", period, ul_previous_time);
+			rtt_init(RTT, 32);
+		}
+	}
+}
+
 /************************************************************************/
 /* configs                                                              */
 /************************************************************************/
@@ -390,6 +426,22 @@ void configure_lvgl(void) {
 	lv_indev_t * my_indev = lv_indev_drv_register(&indev_drv);
 }
 
+static void MAG_init(void)
+{
+	pio_configure(MAG_PIO, PIO_INPUT, MAG_PIO_IDX_MASK, PIO_DEBOUNCE | PIO_DEFAULT);
+
+	pio_handler_set(MAG_PIO,
+					MAG_PIO_ID,
+					MAG_PIO_IDX_MASK,
+					PIO_IT_FALL_EDGE,
+					&mag_callback);
+
+	pio_enable_interrupt(MAG_PIO, MAG_PIO_IDX_MASK);
+	pio_get_interrupt_status(MAG_PIO);
+	
+	NVIC_EnableIRQ(MAG_PIO_ID);
+	NVIC_SetPriority(MAG_PIO_ID, 4); // Prioridade 4
+}
 /************************************************************************/
 /* main                                                                 */
 /************************************************************************/
@@ -403,10 +455,18 @@ int main(void) {
 	configure_lcd();
 	configure_touch();
 	configure_lvgl();
+	
+	xQueueMAG = xQueueCreate(32, sizeof(uint32_t));
+	if (xQueueMAG == NULL)
+	printf("falha em criar a queue do bot");
 
 	/* Create task to control oled */
-	if (xTaskCreate(task_lcd, "LCD", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
-		printf("Failed to create lcd task\r\n");
+	//if (xTaskCreate(task_lcd, "LCD", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
+	//	printf("Failed to create lcd task\r\n");
+	//}
+	
+	if (xTaskCreate(task_mag, "MAG", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
+		printf("Failed to create mag task\r\n");
 	}
 	
 	/* Start the scheduler. */
