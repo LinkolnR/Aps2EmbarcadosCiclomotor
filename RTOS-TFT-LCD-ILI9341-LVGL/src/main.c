@@ -7,6 +7,7 @@
 #include "ili9341.h"
 #include "lvgl.h"
 #include "touch/touch.h"
+#include "arm_math.h"
 
 LV_FONT_DECLARE(dseg70);
 LV_FONT_DECLARE(dseg35);
@@ -20,6 +21,7 @@ LV_FONT_DECLARE(dseg60);
 #define MAG_PIO_IDX_MASK  (1u << MAG_PIO_IDX)
 
 QueueHandle_t xQueueMAG;
+QueueHandle_t xQueueBIKE;
 
 static void MAG_init(void);
 static void task_mag(void *pvParameters);
@@ -30,6 +32,8 @@ typedef struct
 	float velocity;
 	float previus_velocity;
 	float acceleration;
+	float avg_velocity;
+	float distance;
 } bike_t;
 
 /************************************************************************/
@@ -58,13 +62,8 @@ static  lv_obj_t * labelPause;
 static  lv_obj_t * labelRefresh;
 static  lv_obj_t * config;
 
-
-
-
-
 lv_obj_t * btn2;
 lv_obj_t * btn3;
-
 
 volatile int flag_v_med = 0;
 volatile int flag_v_now = 0;
@@ -347,24 +346,29 @@ static void task_mag(void *pvParameters)
 	bike_t bike;
 	bike.velocity = 0;
 	bike.previus_velocity = 0;
-	
-	float RADIUS = 0.20;
-	float PI = 3.14159265358979f; 
+	bike.avg_velocity = 0;
+	bike.distance = 0;
+	float RADIUS = 0.254;
+	uint32_t pulses = 0;
+	float total_period = 0;
 	
 	for (;;)
 	{
 		if (xQueueReceive(xQueueMAG, &ul_previous_time, (TickType_t) 100))
 		{
+			pulses++;
 			float period = (float) ul_previous_time / 1024;
-			printf("Period: %.4f\nUL_PREV_TIME: %u\n", period, ul_previous_time);
+			total_period += period;
 			rtt_init(RTT, 32);
 			float frequency = 1.0 / period;
+			
 			bike.previus_velocity = bike.velocity;
 			bike.velocity = 2 * PI * frequency * RADIUS;
-			
+			bike.distance = 2 * PI * RADIUS * pulses;
+			bike.avg_velocity = bike.distance / total_period;
 			bike.acceleration = bike.velocity - bike.previus_velocity / period;
 			
-			printf("Velocidade: %.4f\nAceleração: %.4f\n\n", bike.velocity, bike.acceleration);
+			xQueueSend(xQueueBIKE, &bike, 0);
 		}
 	}
 }
@@ -478,7 +482,11 @@ int main(void) {
 	
 	xQueueMAG = xQueueCreate(32, sizeof(uint32_t));
 	if (xQueueMAG == NULL)
-	printf("falha em criar a queue do bot");
+		printf("falha em criar a queue do handler do sensor magnetico");
+	
+	xQueueBIKE = xQueueCreate(32, sizeof(bike_t));
+	if (xQueueBIKE == NULL)
+		printf("falha em criar a queue dos dados da bike");
 
 	/* Create task to control oled */
 	//if (xTaskCreate(task_lcd, "LCD", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
