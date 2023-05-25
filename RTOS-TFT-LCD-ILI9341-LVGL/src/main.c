@@ -8,6 +8,7 @@
 #include "lvgl.h"
 #include "touch/touch.h"
 #include "arm_math.h"
+#include "math.h"
 
 LV_FONT_DECLARE(dseg70);
 LV_FONT_DECLARE(dseg35);
@@ -22,6 +23,7 @@ LV_FONT_DECLARE(dseg60);
 
 QueueHandle_t xQueueMAG;
 QueueHandle_t xQueueBIKE;
+float RADIUS = 0.254;
 
 static void MAG_init(void);
 static void task_mag(void *pvParameters);
@@ -31,7 +33,7 @@ typedef struct
 {
 	float velocity;
 	float previus_velocity;
-	float acceleration;
+	char acceleration_tendency;
 	float avg_velocity;
 	float distance;
 } bike_t;
@@ -348,25 +350,34 @@ static void task_mag(void *pvParameters)
 	bike.previus_velocity = 0;
 	bike.avg_velocity = 0;
 	bike.distance = 0;
-	float RADIUS = 0.254;
 	uint32_t pulses = 0;
 	float total_period = 0;
+	float vel_diff;
+	float sensibility = 0.5;
 	
 	for (;;)
 	{
 		if (xQueueReceive(xQueueMAG, &ul_previous_time, (TickType_t) 100))
 		{
 			pulses++;
-			float period = (float) ul_previous_time / 1024;
+			float period = (float) ul_previous_time / 1024 / 3600;
 			total_period += period;
 			rtt_init(RTT, 32);
 			float frequency = 1.0 / period;
 			
 			bike.previus_velocity = bike.velocity;
-			bike.velocity = 2 * PI * frequency * RADIUS;
-			bike.distance = 2 * PI * RADIUS * pulses;
+			bike.velocity = 2 * PI * frequency * RADIUS * 3.6;
+			//Precisa passar para distancia
+			bike.distance += 2 * PI * RADIUS * pulses / 1000;
 			bike.avg_velocity = bike.distance / total_period;
-			bike.acceleration = bike.velocity - bike.previus_velocity / period;
+			
+			vel_diff = bike.velocity - bike.previus_velocity;
+			bike.acceleration_tendency = 0;
+			
+			if (abs(vel_diff) > sensibility)
+			{
+				bike.acceleration_tendency = abs(vel_diff) / vel_diff;
+			}
 			
 			xQueueSend(xQueueBIKE, &bike, 0);
 		}
@@ -489,8 +500,8 @@ int main(void) {
 		printf("falha em criar a queue dos dados da bike");
 
 	/* Create task to control oled */
-	//if (xTaskCreate(task_lcd, "LCD", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
-	//	printf("Failed to create lcd task\r\n");
+	if (xTaskCreate(task_lcd, "LCD", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
+		printf("Failed to create lcd task\r\n");
 	//}
 	
 	if (xTaskCreate(task_mag, "MAG", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
