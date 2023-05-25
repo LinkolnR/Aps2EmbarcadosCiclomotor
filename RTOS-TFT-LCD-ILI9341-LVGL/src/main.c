@@ -33,7 +33,7 @@ typedef struct
 {
 	float velocity;
 	float previus_velocity;
-	char acceleration_tendency;
+	char acceleration;
 	float avg_velocity;
 	float distance;
 } bike_t;
@@ -117,9 +117,7 @@ static void handler_v_med(lv_event_t * e) {
 	lv_event_code_t code = lv_event_get_code(e);
 
 	if(code == LV_EVENT_CLICKED) {
-		printf("ENTROU NO HANDLER DESGRAÇADO");
 		if (!flag_v_med){
-			printf("COR VERDE");
 			lv_color_t color = lv_color_make(0, 255, 0);
 			lv_obj_set_style_text_color(btn2, color, LV_STATE_DEFAULT);
 			lv_obj_set_style_text_color(btn3, lv_color_white(), LV_STATE_DEFAULT);
@@ -141,9 +139,7 @@ static void handler_v_now(lv_event_t * e) {
 	lv_event_code_t code = lv_event_get_code(e);
 
 	if(code == LV_EVENT_CLICKED) {
-		printf("ENTROU NO HANDLER DESGRAÇADO");
 		if (!flag_v_now){
-			printf("COR VERDE");
 			lv_color_t color = lv_color_make(0, 255, 0);
 			lv_obj_set_style_text_color(btn3, color, LV_STATE_DEFAULT);
 			lv_obj_set_style_text_color(btn2, lv_color_white(), LV_STATE_DEFAULT);
@@ -162,7 +158,6 @@ static void handler_v_now(lv_event_t * e) {
 
 static void handler_play(lv_event_t * e) {
 	lv_event_code_t code = lv_event_get_code(e);
-	printf("ENTROU NO PLAY");
 
 	if(code == LV_EVENT_CLICKED) {
 	}
@@ -172,7 +167,6 @@ static void handler_play(lv_event_t * e) {
 
 static void handler_pause(lv_event_t * e) {
 	lv_event_code_t code = lv_event_get_code(e);
-	printf("ENTROU NO PAUSE");
 
 	if(code == LV_EVENT_CLICKED) {
 	}
@@ -182,7 +176,6 @@ static void handler_pause(lv_event_t * e) {
 
 static void handler_refresh(lv_event_t * e) {
 	lv_event_code_t code = lv_event_get_code(e);
-	printf("ENTROU NO Refresh");
 
 	if(code == LV_EVENT_CLICKED) {
 	}
@@ -360,24 +353,32 @@ static void task_mag(void *pvParameters)
 		if (xQueueReceive(xQueueMAG, &ul_previous_time, (TickType_t) 100))
 		{
 			pulses++;
-			float period = (float) ul_previous_time / 1024 / 3600;
-			total_period += period;
+			float period = (float) ul_previous_time / 1024;
 			rtt_init(RTT, 32);
+			period /= 3600;
 			float frequency = 1.0 / period;
+			total_period += period;
 			
 			bike.previus_velocity = bike.velocity;
-			bike.velocity = 2 * PI * frequency * RADIUS * 3.6;
-			//Precisa passar para distancia
-			bike.distance += 2 * PI * RADIUS * pulses / 1000;
+			
+			bike.velocity = 2 * PI * frequency * RADIUS / 1000;
+			
+			bike.distance = 2 * PI * RADIUS * pulses / 1000;
 			bike.avg_velocity = bike.distance / total_period;
 			
 			vel_diff = bike.velocity - bike.previus_velocity;
-			bike.acceleration_tendency = 0;
+			bike.acceleration = 0;
 			
-			if (abs(vel_diff) > sensibility)
+			if (vel_diff > sensibility)
 			{
-				bike.acceleration_tendency = abs(vel_diff) / vel_diff;
+				bike.acceleration = 1;
 			}
+			else if (vel_diff < (sensibility * -1))
+			{
+				bike.acceleration = -1;
+			}
+			
+			printf("Velocity: %.3f, Previous velocity: %.3f, Avg velocity: %.3f, Distance: %.3f, Tempo total: %.1f, Acceleration: %d\n\n", bike.velocity, bike.previus_velocity, bike.avg_velocity, bike.distance, total_period, bike.acceleration);
 			
 			xQueueSend(xQueueBIKE, &bike, 0);
 		}
@@ -502,7 +503,7 @@ int main(void) {
 	/* Create task to control oled */
 	if (xTaskCreate(task_lcd, "LCD", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
 		printf("Failed to create lcd task\r\n");
-	//}
+	}
 	
 	if (xTaskCreate(task_mag, "MAG", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
 		printf("Failed to create mag task\r\n");
