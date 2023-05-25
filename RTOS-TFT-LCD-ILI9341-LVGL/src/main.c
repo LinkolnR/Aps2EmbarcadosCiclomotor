@@ -38,6 +38,13 @@ typedef struct
 	float distance;
 } bike_t;
 
+enum state_t
+{
+	PLAY = 0,
+	PAUSE,
+	RESTART
+};
+
 /************************************************************************/
 /* LCD / LVGL                                                           */
 /************************************************************************/
@@ -339,6 +346,7 @@ static void task_mag(void *pvParameters)
 	
 	uint32_t ul_previous_time;
 	bike_t bike;
+	static state_t state;
 	bike.velocity = 0;
 	bike.previus_velocity = 0;
 	bike.avg_velocity = 0;
@@ -350,38 +358,57 @@ static void task_mag(void *pvParameters)
 	
 	for (;;)
 	{
-		if (xQueueReceive(xQueueMAG, &ul_previous_time, (TickType_t) 100))
+		switch (state)
 		{
-			pulses++;
-			float period = (float) ul_previous_time / 1024;
-			rtt_init(RTT, 32);
-			period /= 3600;
-			float frequency = 1.0 / period;
-			total_period += period;
-			
-			bike.previus_velocity = bike.velocity;
-			
-			bike.velocity = 2 * PI * frequency * RADIUS / 1000;
-			
-			bike.distance = 2 * PI * RADIUS * pulses / 1000;
-			bike.avg_velocity = bike.distance / total_period;
-			
-			vel_diff = bike.velocity - bike.previus_velocity;
-			bike.acceleration = 0;
-			
-			if (vel_diff > sensibility)
-			{
-				bike.acceleration = 1;
-			}
-			else if (vel_diff < (sensibility * -1))
-			{
-				bike.acceleration = -1;
-			}
-			
-			printf("Velocity: %.3f, Previous velocity: %.3f, Avg velocity: %.3f, Distance: %.3f, Tempo total: %.1f, Acceleration: %d\n\n", bike.velocity, bike.previus_velocity, bike.avg_velocity, bike.distance, total_period, bike.acceleration);
-			
-			xQueueSend(xQueueBIKE, &bike, 0);
+			case PLAY:
+				if (xQueueReceive(xQueueMAG, &ul_previous_time, (TickType_t) 100))
+				{
+					pulses++;
+					float period = (float) ul_previous_time / 1024;
+					rtt_init(RTT, 32);
+					period /= 3600;
+					float frequency = 1.0 / period;
+					total_period += period;
+					
+					bike.previus_velocity = bike.velocity;
+					
+					bike.velocity = 2 * PI * frequency * RADIUS / 1000;
+					
+					bike.distance = 2 * PI * RADIUS * pulses / 1000;
+					bike.avg_velocity = bike.distance / total_period;
+					
+					vel_diff = bike.velocity - bike.previus_velocity;
+					bike.acceleration = 0;
+					
+					if (vel_diff > sensibility)
+					{
+						bike.acceleration = 1;
+					}
+					else if (vel_diff < (sensibility * -1))
+					{
+						bike.acceleration = -1;
+					}
+					
+					printf("Velocity: %.3f, Previous velocity: %.3f, Avg velocity: %.3f, Distance: %.3f, Tempo total: %.1f, Acceleration: %d\n\n", bike.velocity, bike.previus_velocity, bike.avg_velocity, bike.distance, total_period, bike.acceleration);
+				}
+				break;
+			case PAUSE:
+				vTaskDelay(100);
+				break;
+			case RESTART:
+				bike.velocity = 0;
+				bike.previus_velocity = 0;
+				bike.avg_velocity = 0;
+				bike.distance = 0;
+				pulses = 0;
+				total_period = 0;
+				state = PLAY;
+				break;
+			default:
+				printf("Estado invalido!\n");
 		}
+		
+		xQueueSend(xQueueBIKE, &bike, 0);
 	}
 }
 
