@@ -38,6 +38,16 @@ typedef struct
 	float distance;
 } bike_t;
 
+typedef struct  {
+  uint32_t year;
+  uint32_t month;
+  uint32_t day;
+  uint32_t week;
+  uint32_t hour;
+  uint32_t minute;
+  uint32_t second;
+} calendar;
+
 enum state_t
 {
 	PLAY = 0,
@@ -49,8 +59,8 @@ enum state_t
 /* LCD / LVGL                                                           */
 /************************************************************************/
 
-#define LV_HOR_RES_MAX          (320)
-#define LV_VER_RES_MAX          (240)
+#define LV_HOR_RES_MAX          (240)
+#define LV_VER_RES_MAX          (320)
 
 /*A static or global variable to store the buffers*/
 static lv_disp_draw_buf_t disp_buf;
@@ -63,6 +73,8 @@ static lv_indev_drv_t indev_drv;
 /* Global */
 
 lv_obj_t * labelVelocidadeAtual;
+lv_obj_t * labelVelocidade2;
+
 static  lv_obj_t * labelClock;
 static  lv_obj_t * labelTime;
 static  lv_obj_t * labelDistancia;
@@ -70,13 +82,18 @@ static  lv_obj_t * labelPlay;
 static  lv_obj_t * labelPause;
 static  lv_obj_t * labelRefresh;
 static  lv_obj_t * config;
-
+lv_obj_t * km_h;
 lv_obj_t * btn2;
 lv_obj_t * btn3;
+lv_obj_t * play ;
+lv_obj_t * pause;
+lv_obj_t * refresh;
 
-volatile int flag_v_med = 0;
-volatile int flag_v_now = 0;
-
+volatile int flag_v = 0; // 0 -> atual ; 1 -> média
+volatile int s = 50;
+volatile int min = 0;
+volatile int h = 0;
+enum state_t state;
 
 /************************************************************************/
 /* RTOS                                                                 */
@@ -90,6 +107,8 @@ extern void vApplicationIdleHook(void);
 extern void vApplicationTickHook(void);
 extern void vApplicationMallocFailedHook(void);
 extern void xPortSysTickHandler(void);
+static void RTT_init(float freqPrescale, uint32_t IrqNPulses, uint32_t rttIRQSource);
+void RTC_init(Rtc *rtc, uint32_t id_rtc, calendar t, uint32_t irq_type);
 
 extern void vApplicationStackOverflowHook(xTaskHandle *pxTask, signed char *pcTaskName) {
 	printf("stack overflow %x %s\r\n", pxTask, (portCHAR *)pcTaskName);
@@ -102,6 +121,44 @@ extern void vApplicationTickHook(void) { }
 
 extern void vApplicationMallocFailedHook(void) {
 	configASSERT( ( volatile void * ) NULL );
+}
+
+
+void RTC_Handler(void) {
+    uint32_t ul_status = rtc_get_status(RTC);
+	uint32_t current_hour, current_min, current_sec;
+	rtc_get_time(RTC, &current_hour, &current_min, &current_sec);
+	
+    /* seccond tick */
+    if ((ul_status & RTC_SR_SEC) == RTC_SR_SEC) {	
+	// o código para irq de segundo vem aqui
+	lv_label_set_text_fmt(labelClock, "%02d:%02d:%02d", current_hour, current_min ,current_sec);
+	if (state == PLAY){
+		printf("ENTRANDO AQUiiiiii");
+		s++;
+		if (s==60){
+			s = 0;
+			min++;
+		}
+		if (min==60){
+			min = 0;
+			h++;
+		}
+		lv_label_set_text_fmt(labelTime, "%02d:%02d", min, s );
+	}
+    }
+	
+    /* Time or date alarm */
+    if ((ul_status & RTC_SR_ALARM) == RTC_SR_ALARM) {
+    	// o código para irq de alame vem aqui
+	  }
+
+    rtc_clear_status(RTC, RTC_SCCR_SECCLR);
+    rtc_clear_status(RTC, RTC_SCCR_ALRCLR);
+    rtc_clear_status(RTC, RTC_SCCR_ACKCLR);
+    rtc_clear_status(RTC, RTC_SCCR_TIMCLR);
+    rtc_clear_status(RTC, RTC_SCCR_CALCLR);
+    rtc_clear_status(RTC, RTC_SCCR_TDERRCLR);
 }
 
 /************************************************************************/
@@ -124,17 +181,22 @@ static void handler_v_med(lv_event_t * e) {
 	lv_event_code_t code = lv_event_get_code(e);
 
 	if(code == LV_EVENT_CLICKED) {
-		if (!flag_v_med){
-			lv_color_t color = lv_color_make(0, 255, 0);
-			lv_obj_set_style_text_color(btn2, color, LV_STATE_DEFAULT);
-			lv_obj_set_style_text_color(btn3, lv_color_white(), LV_STATE_DEFAULT);
+		flag_v = 1;
+		lv_color_t color = lv_color_make(0, 255, 0);
+		lv_obj_set_style_text_color(btn2, color, LV_STATE_DEFAULT);
+		lv_obj_set_style_text_color(btn3, lv_color_white(), LV_STATE_DEFAULT);
+		static uint32_t ul_previous_time;
+		ul_previous_time = rtt_read_timer_value(RTT);
+		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+		xQueueSendFromISR(xQueueMAG, &ul_previous_time, xHigherPriorityTaskWoken);
+		//if (!flag_v){
 
-			flag_v_med = 1;
-		}else{
-			flag_v_med = 0;
-			lv_obj_set_style_text_color(btn2, lv_color_white(), LV_STATE_DEFAULT);
+		//	flag_v = 1;
+		//}else{
+		//	flag_v = 0;
+		//	lv_obj_set_style_text_color(btn2, lv_color_white(), LV_STATE_DEFAULT);
 
-		}
+		//}
 
 	}
 	else if(code == LV_EVENT_VALUE_CHANGED) {
@@ -144,18 +206,22 @@ static void handler_v_med(lv_event_t * e) {
 
 static void handler_v_now(lv_event_t * e) {
 	lv_event_code_t code = lv_event_get_code(e);
-
 	if(code == LV_EVENT_CLICKED) {
-		if (!flag_v_now){
-			lv_color_t color = lv_color_make(0, 255, 0);
-			lv_obj_set_style_text_color(btn3, color, LV_STATE_DEFAULT);
-			lv_obj_set_style_text_color(btn2, lv_color_white(), LV_STATE_DEFAULT);
-			flag_v_now = 1;
-		}else{
-			flag_v_now = 0;
-			lv_obj_set_style_text_color(btn3, lv_color_white(), LV_STATE_DEFAULT);
+		flag_v = 0;
+		lv_color_t color = lv_color_make(0, 255, 0);
+		lv_obj_set_style_text_color(btn3, color, LV_STATE_DEFAULT);
+		lv_obj_set_style_text_color(btn2, lv_color_white(), LV_STATE_DEFAULT);
+		static uint32_t ul_previous_time;
+		ul_previous_time = rtt_read_timer_value(RTT);
+		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+		xQueueSendFromISR(xQueueMAG, &ul_previous_time, xHigherPriorityTaskWoken);
+			//flag_v = 1;
+		//if (!flag_v){
+		//}else{
+		//	flag_v = 0;
+		//	lv_obj_set_style_text_color(btn3, lv_color_white(), LV_STATE_DEFAULT);
 
-		}
+		//}
 
 	}
 	else if(code == LV_EVENT_VALUE_CHANGED) {
@@ -167,8 +233,11 @@ static void handler_play(lv_event_t * e) {
 	lv_event_code_t code = lv_event_get_code(e);
 
 	if(code == LV_EVENT_CLICKED) {
-	}
-	else if(code == LV_EVENT_VALUE_CHANGED) {
+		state = PLAY;
+		static uint32_t ul_previous_time;
+		ul_previous_time = rtt_read_timer_value(RTT);
+		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+		xQueueSendFromISR(xQueueMAG, &ul_previous_time, xHigherPriorityTaskWoken);
 	}
 }
 
@@ -176,6 +245,8 @@ static void handler_pause(lv_event_t * e) {
 	lv_event_code_t code = lv_event_get_code(e);
 
 	if(code == LV_EVENT_CLICKED) {
+		printf("Entrou no Pause\n");
+		state = PAUSE;
 	}
 	else if(code == LV_EVENT_VALUE_CHANGED) {
 	}
@@ -214,47 +285,51 @@ void lv_ex_btn_1(void) {
 	// label = lv_label_create(btn1);
 	// lv_label_set_text(label, "Corsi");
 	// lv_obj_center(label);
-
-	/* Velocidade grande */
-	labelVelocidadeAtual = lv_label_create(lv_scr_act());
-	lv_obj_align(labelVelocidadeAtual, LV_ALIGN_TOP_LEFT, 20 , 0);
-	lv_obj_set_style_text_font(labelVelocidadeAtual, &dseg70, LV_STATE_DEFAULT);
-	lv_obj_set_style_text_color(labelVelocidadeAtual, lv_color_white(), LV_STATE_DEFAULT);
-	lv_label_set_text_fmt(labelVelocidadeAtual, "%02d", 23);
-
-	/* Tempo da corrida */
-	labelTime = lv_label_create(lv_scr_act());
-	lv_obj_align_to(labelTime, labelVelocidadeAtual, LV_ALIGN_BOTTOM_LEFT, -10, 40);
-	lv_obj_set_style_text_font(labelTime, &dseg30, LV_STATE_DEFAULT);
-	lv_obj_set_style_text_color(labelTime, lv_color_white(), LV_STATE_DEFAULT);
-	lv_label_set_text_fmt(labelTime, "%02d:%02d:%02d", 0, 0,0 );
-	
-	/* Distância percorrida */
-	labelDistancia = lv_label_create(lv_scr_act());
-	lv_obj_align_to(labelDistancia, labelVelocidadeAtual, LV_ALIGN_BOTTOM_LEFT, -10, 80);
-	lv_obj_set_style_text_font(labelDistancia, &dseg30, LV_STATE_DEFAULT);
-	lv_obj_set_style_text_color(labelDistancia, lv_color_white(), LV_STATE_DEFAULT);
-	lv_label_set_text_fmt(labelDistancia, "dist");
-
-
-	/* km/ h  */
-	lv_obj_t * km_h = lv_label_create(lv_scr_act());
-	lv_obj_align_to(km_h, labelVelocidadeAtual, LV_ALIGN_OUT_RIGHT_BOTTOM, 0, 0);
-	lv_obj_add_style(km_h, &style, 0);
-	
-	// Create an lv_color object using lv_color_make
-    //lv_color_t color = lv_color_make(0, 255, 0);  // Creates a red color
-
-	lv_obj_set_style_text_color(km_h, lv_color_white(), LV_STATE_DEFAULT);
-	
-	lv_label_set_text(km_h, " km/h") ;
-	
 	/* hora */
+	
 	labelClock = lv_label_create(lv_scr_act());
 	lv_obj_align(labelClock, LV_ALIGN_TOP_RIGHT, 0 , 0);
 	lv_obj_set_style_text_font(labelClock, &dseg30, LV_STATE_DEFAULT);
 	lv_obj_set_style_text_color(labelClock, lv_color_white(), LV_STATE_DEFAULT);
-	lv_label_set_text_fmt(labelClock, "%02d:%02d:%02d", 0, 0 );
+	lv_label_set_text_fmt(labelClock, "%02d:%02d:%02d", 0, 0 ,0);
+
+	/* Velocidade grande */
+	labelVelocidadeAtual = lv_label_create(lv_scr_act());
+	lv_obj_align(labelVelocidadeAtual, LV_ALIGN_LEFT_MID, 10 , -65);
+	
+	lv_obj_set_style_text_font(labelVelocidadeAtual, &dseg70, LV_STATE_DEFAULT);
+	lv_obj_set_style_text_color(labelVelocidadeAtual, lv_color_white(), LV_STATE_DEFAULT);
+	lv_label_set_text_fmt(labelVelocidadeAtual, "%02d", 23);
+
+	/* km/ h  */
+	km_h = lv_label_create(lv_scr_act());
+	lv_obj_align_to(km_h,labelVelocidadeAtual, LV_ALIGN_OUT_TOP_MID,	 0, 0);
+	lv_obj_add_style(km_h, &style, 0);
+	lv_obj_set_style_text_color(km_h, lv_color_white(), LV_STATE_DEFAULT);
+	lv_label_set_text_fmt(km_h, " km/h");
+	
+	// Create an lv_color object using lv_color_make
+	//lv_color_t color = lv_color_make(0, 255, 0);  // Creates a red color
+
+	/* Tempo da corrida */
+	labelTime = lv_label_create(lv_scr_act());
+	//lv_obj_align(labelTime, LV_ALIGN_TOP_LEFT, 20 , 0);
+	lv_obj_align_to(labelTime, labelVelocidadeAtual, LV_ALIGN_BOTTOM_LEFT, -10, 40);
+	lv_obj_set_style_text_font(labelTime, &dseg30, LV_STATE_DEFAULT);
+	lv_obj_set_style_text_color(labelTime, lv_color_white(), LV_STATE_DEFAULT);
+	lv_label_set_text_fmt(labelTime, "%02d:%02d", 0, 0 );
+	
+	/* Distância percorrida */
+	// labelDistancia = lv_label_create(lv_scr_act());
+	// lv_obj_align_to(labelDistancia, labelVelocidadeAtual, LV_ALIGN_BOTTOM_LEFT, -10, 80);
+	// lv_obj_set_style_text_font(labelDistancia, &dseg30, LV_STATE_DEFAULT);
+	// lv_obj_set_style_text_color(labelDistancia, lv_color_white(), LV_STATE_DEFAULT);
+	// lv_label_set_text_fmt(labelDistancia, "dist");
+
+
+	
+	
+	
 		
 	
 	btn2 = lv_btn_create(lv_scr_act());
@@ -267,59 +342,70 @@ void lv_ex_btn_1(void) {
 	lv_label_set_text(label, "Vmed");
 	lv_obj_center(label);
 
+	/*Velocidade atual*/
 	btn3 = lv_btn_create(lv_scr_act());
 	lv_obj_add_event_cb(btn3, handler_v_now, LV_EVENT_ALL, NULL);
 	lv_obj_align_to(btn3, labelClock, LV_ALIGN_BOTTOM_MID, 0, 100);
 	//lv_obj_add_flag(btn3, LV_OBJ_FLAG_CHECKABLE);
 	lv_obj_set_height(btn3, LV_SIZE_CONTENT);
-
+	lv_color_t color = lv_color_make(0, 255, 0);
+	lv_obj_set_style_text_color(btn3, color, LV_STATE_DEFAULT);
 	label = lv_label_create(btn3);
 	lv_label_set_text(label, "Vnow");
 	lv_obj_center(label);
-
-
-	/* Player button */
-
-	lv_obj_t * play = lv_btn_create(lv_scr_act());
-    lv_obj_add_event_cb(play, handler_play, LV_EVENT_ALL, NULL);
-    lv_obj_align(play, LV_ALIGN_BOTTOM_LEFT, 20 , -50);
-	lv_obj_add_style(play, &style, 0);
-
-    labelPlay = lv_label_create(play);
-    lv_label_set_text(labelPlay, "[  " LV_SYMBOL_PLAY " ]");
-    lv_obj_center(labelPlay);
-	
-	/* Pause button */
-	lv_obj_t * pause = lv_btn_create(lv_scr_act());
-    lv_obj_add_event_cb(pause, handler_pause, LV_EVENT_ALL, NULL);
-    lv_obj_align_to(pause, play , LV_ALIGN_OUT_RIGHT_TOP, 20 , 0);
-	lv_obj_add_style(pause, &style, 0);
-
-    labelPause = lv_label_create(pause);
-    lv_label_set_text(labelPause, "[ " LV_SYMBOL_PAUSE " ]");
-    lv_obj_center(labelPause);
-
-	/* Recomeçar button */
-	lv_obj_t * refresh = lv_btn_create(lv_scr_act());
-    lv_obj_add_event_cb(refresh, handler_refresh, LV_EVENT_ALL, NULL);
-    lv_obj_align_to(refresh, pause , LV_ALIGN_OUT_RIGHT_TOP, 20 , 0);
-	lv_obj_add_style(refresh, &style, 0);
-
-    labelRefresh = lv_label_create(refresh);
-    lv_label_set_text(labelRefresh, "[ " LV_SYMBOL_REFRESH " ]");
-    lv_obj_center(labelRefresh);
 
 	/* Config */
 	config = lv_btn_create(lv_scr_act());
 	lv_obj_add_event_cb(config, handler_v_med, LV_EVENT_ALL, NULL);
 	lv_obj_align_to(config, labelClock, LV_ALIGN_BOTTOM_MID, 0, 150);
+	
 	//lv_obj_add_flag(btn2, LV_OBJ_FLAG_CHECKABLE);
 	lv_obj_set_height(config, LV_SIZE_CONTENT);
 
 	label = lv_label_create(config);
 	lv_label_set_text(label, "Config");
 	lv_obj_center(label);
+
+
+	/* Player button */
+
+	play = lv_btn_create(lv_scr_act());
+	lv_obj_add_event_cb(play, handler_play, LV_EVENT_ALL, NULL);
+	lv_obj_align(play, LV_ALIGN_BOTTOM_LEFT, 20 , -50);
+	//lv_obj_add_style(play, &style, 0);
+	// lv_obj_add_flag(play, LV_OBJ_FLAG_CHECKABLE);
+	// lv_obj_set_height(play, LV_SIZE_CONTENT);
+	labelPlay = lv_label_create(play);
+	lv_label_set_text(labelPlay, "[  " LV_SYMBOL_PLAY " ]");
+	lv_obj_center(labelPlay);
 	
+	/* Pause button */
+	pause = lv_btn_create(lv_scr_act());
+	lv_obj_add_event_cb(pause, handler_pause, LV_EVENT_ALL, NULL);
+	lv_obj_align_to(pause, play , LV_ALIGN_OUT_RIGHT_TOP, 20 , 0);
+	//lv_obj_add_style(pause, &style, 0);
+	// lv_obj_set_height(pause, LV_SIZE_CONTENT);
+	// lv_obj_add_flag(pause, LV_OBJ_FLAG_CHECKABLE);
+
+
+	labelPause = lv_label_create(pause);
+	lv_label_set_text(labelPause, "[ " LV_SYMBOL_PAUSE " ]");
+	lv_obj_center(labelPause);
+
+	/* Recomeçar button */
+	refresh = lv_btn_create(lv_scr_act());
+	lv_obj_add_event_cb(refresh, handler_refresh, LV_EVENT_ALL, NULL);
+	lv_obj_align_to(refresh, pause , LV_ALIGN_OUT_RIGHT_TOP, 20 , 0);
+	lv_obj_add_style(refresh, &style, 0);
+	//lv_obj_set_height(refresh, LV_SIZE_CONTENT);
+	//lv_obj_add_flag(refresh, LV_OBJ_FLAG_CHECKABLE);
+
+	labelRefresh = lv_label_create(refresh);
+	lv_label_set_text(labelRefresh, "[ " LV_SYMBOL_REFRESH " ]");
+	lv_obj_center(labelRefresh);
+
+		
+		
 
 }
 
@@ -330,6 +416,10 @@ void lv_ex_btn_1(void) {
 static void task_lcd(void *pvParameters) {
 	int px, py;
 
+	calendar rtc_initial = {2018, 3, 19, 12, 15, 45 ,1};
+	RTC_init(RTC, ID_RTC, rtc_initial, RTC_IER_ALREN | RTC_IER_SECEN);
+	uint32_t current_hour, current_min, current_sec;
+	rtc_get_time(RTC, &current_hour, &current_min, &current_sec);
 	lv_ex_btn_1();
 
 	for (;;)  {
@@ -346,7 +436,8 @@ static void task_mag(void *pvParameters)
 	
 	uint32_t ul_previous_time;
 	bike_t bike;
-	static state_t state;
+	state = PAUSE;
+	//static enum state_t state;
 	bike.velocity = 0;
 	bike.previus_velocity = 0;
 	bike.avg_velocity = 0;
@@ -358,11 +449,13 @@ static void task_mag(void *pvParameters)
 	
 	for (;;)
 	{
+		//printf("atual state: %d",state);
 		switch (state)
 		{
 			case PLAY:
 				if (xQueueReceive(xQueueMAG, &ul_previous_time, (TickType_t) 100))
 				{
+					RTT_init(16, 16, RTT_MR_ALMIEN);
 					pulses++;
 					float period = (float) ul_previous_time / 1024;
 					rtt_init(RTT, 32);
@@ -390,9 +483,15 @@ static void task_mag(void *pvParameters)
 					}
 					
 					printf("Velocity: %.3f, Previous velocity: %.3f, Avg velocity: %.3f, Distance: %.3f, Tempo total: %.1f, Acceleration: %d\n\n", bike.velocity, bike.previus_velocity, bike.avg_velocity, bike.distance, total_period, bike.acceleration);
+					if (flag_v){// flag_v = 1 -> velocidade média
+						lv_label_set_text_fmt(labelVelocidadeAtual, "%02d", (int) bike.avg_velocity);
+					}else{// flag_v = 0 -> velocidade atual
+						lv_label_set_text_fmt(labelVelocidadeAtual, "%02d", (int) bike.velocity);
+					}
 				}
 				break;
 			case PAUSE:
+				//printf("PAUSADAAAAAAAA");
 				vTaskDelay(100);
 				break;
 			case RESTART:
@@ -415,6 +514,55 @@ static void task_mag(void *pvParameters)
 /************************************************************************/
 /* configs                                                              */
 /************************************************************************/
+
+static void RTT_init(float freqPrescale, uint32_t IrqNPulses, uint32_t rttIRQSource) {
+
+  uint16_t pllPreScale = (int) (((float) 32768) / freqPrescale);
+	
+  rtt_sel_source(RTT, false);
+  rtt_init(RTT, pllPreScale);
+  
+  if (rttIRQSource & RTT_MR_ALMIEN) {
+	uint32_t ul_previous_time;
+  	ul_previous_time = rtt_read_timer_value(RTT);
+  	while (ul_previous_time == rtt_read_timer_value(RTT));
+  	rtt_write_alarm_time(RTT, IrqNPulses+ul_previous_time);
+  }
+
+  /* config NVIC */
+  NVIC_DisableIRQ(RTT_IRQn);
+  NVIC_ClearPendingIRQ(RTT_IRQn);
+  NVIC_SetPriority(RTT_IRQn, 4);
+  NVIC_EnableIRQ(RTT_IRQn);
+
+  /* Enable RTT interrupt */
+  if (rttIRQSource & (RTT_MR_RTTINCIEN | RTT_MR_ALMIEN))
+	rtt_enable_interrupt(RTT, rttIRQSource);
+  else
+	rtt_disable_interrupt(RTT, RTT_MR_RTTINCIEN | RTT_MR_ALMIEN);
+		  
+}
+
+void RTC_init(Rtc *rtc, uint32_t id_rtc, calendar t, uint32_t irq_type) {
+	/* Configura o PMC */
+	pmc_enable_periph_clk(ID_RTC);
+
+	/* Default RTC configuration, 24-hour mode */
+	rtc_set_hour_mode(rtc, 0);
+
+	/* Configura data e hora manualmente */
+	rtc_set_date(rtc, t.year, t.month, t.day, t.week);
+	rtc_set_time(rtc, t.hour, t.minute, t.second);
+
+	/* Configure RTC interrupts */
+	NVIC_DisableIRQ(id_rtc);
+	NVIC_ClearPendingIRQ(id_rtc);
+	NVIC_SetPriority(id_rtc, 4);
+	NVIC_EnableIRQ(id_rtc);
+
+	/* Ativa interrupcao via alarme */
+	rtc_enable_interrupt(rtc,  irq_type);
+}
 
 static void configure_lcd(void) {
 	/**LCD pin configure on SPI*/
@@ -465,8 +613,8 @@ void my_input_read(lv_indev_drv_t * drv, lv_indev_data_t*data) {
 	else
 		data->state = LV_INDEV_STATE_RELEASED; 
 	
-	data->point.x = px;
-	data->point.y = py;
+	data->point.x = py;
+	data->point.y = 320-px;
 }
 
 void configure_lvgl(void) {
@@ -516,6 +664,7 @@ int main(void) {
 
 	/* LCd, touch and lvgl init*/
 	configure_lcd();
+	ili9341_set_orientation(ILI9341_FLIP_Y | ILI9341_SWITCH_XY);
 	configure_touch();
 	configure_lvgl();
 	
