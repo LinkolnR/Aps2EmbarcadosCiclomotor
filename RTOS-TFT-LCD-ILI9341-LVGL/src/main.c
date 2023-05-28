@@ -23,7 +23,7 @@ LV_FONT_DECLARE(dseg60);
 
 QueueHandle_t xQueueMAG;
 
-float RADIUS = 0.254;
+volatile float RADIUS = 0.254;
 
 static void MAG_init(void);
 static void task_mag(void *pvParameters);
@@ -56,6 +56,9 @@ enum state_t
 	RESTART
 };
 
+SemaphoreHandle_t xSemaphoreMAIN;
+SemaphoreHandle_t xSemaphoreCONFIG;
+
 /************************************************************************/
 /* LCD / LVGL                                                           */
 /************************************************************************/
@@ -75,8 +78,8 @@ static lv_indev_drv_t indev_drv;
 
 lv_obj_t * labelVelocidadeAtual;
 lv_obj_t * labelVelocidade2;
-lv_obj_t * labelButHora;
-lv_obj_t * labelButMin;
+lv_obj_t * labelDiametro;
+lv_obj_t * labelDiamentroUp;
 
 static  lv_obj_t * labelClock;
 static  lv_obj_t * labelTime;
@@ -86,6 +89,7 @@ static  lv_obj_t * labelPause;
 static  lv_obj_t * labelRefresh;
 static  lv_obj_t * config;
 static	lv_obj_t * labelAc;
+static  lv_obj_t * labelButDiameterUp;
 
 lv_obj_t * km_h;
 lv_obj_t * btn2;
@@ -173,15 +177,12 @@ void RTC_Handler(void) {
 /* lvgl                                                                 */
 /************************************************************************/
 
-static void event_handler(lv_event_t * e) {
+static void handler_main(lv_event_t * e) {
 	lv_event_code_t code = lv_event_get_code(e);
 
 	if(code == LV_EVENT_CLICKED) {
-		LV_LOG_USER("Clicked");
-
-	}
-	else if(code == LV_EVENT_VALUE_CHANGED) {
-		LV_LOG_USER("Toggled");
+		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+		xSemaphoreGiveFromISR(xSemaphoreMAIN, &xHigherPriorityTaskWoken);
 	}
 }
 
@@ -259,8 +260,7 @@ static void handler_pause(lv_event_t * e) {
 		lv_obj_set_style_text_color(pause, color, LV_STATE_DEFAULT);
 		lv_obj_set_style_text_color(play, lv_color_white(), LV_STATE_DEFAULT);
 	}
-	else if(code == LV_EVENT_VALUE_CHANGED) {
-	}
+	
 }
 
 static void handler_refresh(lv_event_t * e) {
@@ -272,30 +272,32 @@ static void handler_refresh(lv_event_t * e) {
 		lv_obj_set_style_text_color(play, lv_color_white(), LV_STATE_DEFAULT);
 
 	}
-	else if(code == LV_EVENT_VALUE_CHANGED) {
-	}
 }
 
 static void handler_config(lv_event_t * e){
 	lv_event_code_t code = lv_event_get_code(e);
 
 	if(code == LV_EVENT_CLICKED) {
-		lv_obj_clean(lv_scr_act());
-		//lv_config();
+		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+		xSemaphoreGiveFromISR(xSemaphoreCONFIG, &xHigherPriorityTaskWoken);
 	}
 }
 
-static void handler_up_hora(lv_event_t * e){
+static void handler_up_radius(lv_event_t * e){
 	lv_event_code_t code = lv_event_get_code(e);
 
 	if(code == LV_EVENT_CLICKED) {
-		printf("AUMENTANDO A HORA");
-		hora++;
-		if(hora == 25){
-			hora = 0;
-		}
-		lv_label_set_text_fmt(labelClock, "%02d:%02d", hora, minuto ,0);
-	
+		RADIUS = RADIUS + 0.0005;
+		lv_label_set_text_fmt(labelDiametro, "%.3f", RADIUS * 2);
+	}
+}
+
+static void handler_down_radius(lv_event_t * e){
+	lv_event_code_t code = lv_event_get_code(e);
+
+	if(code == LV_EVENT_CLICKED) {
+		RADIUS = RADIUS - 0.0005;
+		lv_label_set_text_fmt(labelDiametro, "%.3f", RADIUS * 2);
 	}
 }
 
@@ -307,41 +309,8 @@ static void mag_callback(void)
 	xQueueSendFromISR(xQueueMAG, &ul_previous_time, xHigherPriorityTaskWoken);
 }
 
-void lv_config(void){
-	static lv_style_t style;
-	lv_style_init(&style);
-	lv_style_set_bg_color(&style, lv_color_black());
-	lv_obj_t * label;
-
-	/* Hora */
-	labelClock = lv_label_create(lv_scr_act());
-	lv_obj_align(labelClock, LV_ALIGN_TOP_RIGHT, 0 , 0);
-	lv_obj_set_style_text_font(labelClock, &dseg30, LV_STATE_DEFAULT);
-	lv_obj_set_style_text_color(labelClock, lv_color_white(), LV_STATE_DEFAULT);
-	lv_label_set_text_fmt(labelClock, "%02d:%02d", hora, minuto ,0);
-
-	lv_obj_t * butHora = lv_btn_create(lv_scr_act());
-	lv_obj_add_event_cb(butHora, handler_up_hora, LV_EVENT_ALL, NULL);
-	lv_obj_align_to(butHora,labelClock, LV_ALIGN_OUT_LEFT_BOTTOM, -10, 30);
-	//lv_obj_add_style(butHora, &style, 0);
-	lv_obj_set_height(butHora, LV_SIZE_CONTENT);
-	labelButHora = lv_label_create(butHora);
-	lv_label_set_text(labelButHora, " " LV_SYMBOL_UP " ");
-	lv_obj_center(labelButHora);
-
-	/* Config */
-	config = lv_btn_create(lv_scr_act());
-	lv_obj_add_event_cb(config, handler_config, LV_EVENT_ALL, NULL);
-	lv_obj_align(config, LV_ALIGN_BOTTOM_LEFT, 50, -100);
-	lv_obj_set_height(config, LV_SIZE_CONTENT);
-	lv_color_t color = lv_color_make(0, 255, 0);
-	lv_obj_set_style_text_color(config, color, LV_STATE_DEFAULT);
-
-	label = lv_label_create(config);
-	lv_label_set_text(label, "Config");
-	lv_obj_center(label);
+static void lv_config(void){
 	
-
 }
 
 void lv_ex_btn_1(void) {
@@ -409,7 +378,7 @@ void lv_ex_btn_1(void) {
 	
 	btn2 = lv_btn_create(lv_scr_act());
 	lv_obj_add_event_cb(btn2, handler_v_med, LV_EVENT_ALL, NULL);
-	lv_obj_align_to(btn2, labelClock, LV_ALIGN_BOTTOM_MID, 0, 50);
+	lv_obj_align_to(btn2, labelClock, LV_ALIGN_BOTTOM_MID, 0, 40);
 	//lv_obj_add_flag(btn2, LV_OBJ_FLAG_CHECKABLE);
 	lv_obj_set_height(btn2, LV_SIZE_CONTENT);
 
@@ -420,7 +389,7 @@ void lv_ex_btn_1(void) {
 	/*Velocidade atual*/
 	btn3 = lv_btn_create(lv_scr_act());
 	lv_obj_add_event_cb(btn3, handler_v_now, LV_EVENT_ALL, NULL);
-	lv_obj_align_to(btn3, labelClock, LV_ALIGN_BOTTOM_MID, 0, 100);
+	lv_obj_align_to(btn3, labelClock, LV_ALIGN_BOTTOM_MID, 0, 80);
 	//lv_obj_add_flag(btn3, LV_OBJ_FLAG_CHECKABLE);
 	lv_obj_set_height(btn3, LV_SIZE_CONTENT);
 	lv_color_t color = lv_color_make(0, 255, 0);
@@ -432,7 +401,7 @@ void lv_ex_btn_1(void) {
 	/* Config */
 	config = lv_btn_create(lv_scr_act());
 	lv_obj_add_event_cb(config, handler_config, LV_EVENT_ALL, NULL);
-	lv_obj_align_to(config, labelClock, LV_ALIGN_BOTTOM_MID, 0, 150);
+	lv_obj_align_to(config, labelClock, LV_ALIGN_BOTTOM_MID, 0, 120);
 	
 	//lv_obj_add_flag(btn2, LV_OBJ_FLAG_CHECKABLE);
 	lv_obj_set_height(config, LV_SIZE_CONTENT);
@@ -450,6 +419,7 @@ void lv_ex_btn_1(void) {
 	//lv_obj_add_style(play, &style, 0);
 	//lv_obj_add_flag(play, LV_OBJ_FLAG_CHECKABLE);
 	lv_obj_set_height(play, LV_SIZE_CONTENT);
+	lv_obj_set_size(play, 50, 50);
 	labelPlay = lv_label_create(play);
 	lv_label_set_text(labelPlay, "[  " LV_SYMBOL_PLAY " ]");
 	lv_obj_center(labelPlay);
@@ -460,6 +430,7 @@ void lv_ex_btn_1(void) {
 	lv_obj_align_to(pause, play , LV_ALIGN_OUT_RIGHT_TOP, 20 , 0);
 	//lv_obj_add_style(pause, &style, 0);
 	lv_obj_set_height(pause, LV_SIZE_CONTENT);
+	lv_obj_set_size(pause, 50, 50);
 	//lv_obj_add_flag(pause, LV_OBJ_FLAG_CHECKABLE);
 	
 	labelPause = lv_label_create(pause);
@@ -473,6 +444,7 @@ void lv_ex_btn_1(void) {
 	//lv_obj_add_style(refresh, &style, 0);
 	lv_obj_set_height(refresh, LV_SIZE_CONTENT);
 	//lv_obj_add_flag(refresh, LV_OBJ_FLAG_CHECKABLE);
+	lv_obj_set_size(refresh, 50, 50);
 
 	labelRefresh = lv_label_create(refresh);
 	lv_label_set_text(labelRefresh, "[ " LV_SYMBOL_REFRESH " ]");
@@ -501,9 +473,18 @@ static void task_lcd(void *pvParameters) {
 	lv_obj_set_style_text_color(pause, color, LV_STATE_DEFAULT);
 	
 	for (;;)  {
+		if (xSemaphoreTake(xSemaphoreMAIN, 50))
+		{
+			lv_obj_clean(lv_scr_act());
+			lv_ex_btn_1();
+		}
+		if (xSemaphoreTake(xSemaphoreCONFIG, 50))
+		{
+			lv_obj_clean(lv_scr_act());
+			lv_config();
+		}
 		lv_tick_inc(50);
 		lv_task_handler();
-		vTaskDelay(50);
 	}
 }
 
@@ -771,6 +752,14 @@ int main(void) {
 	if (xTaskCreate(task_mag, "MAG", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
 		printf("Failed to create mag task\r\n");
 	}
+	
+	xSemaphoreMAIN = xSemaphoreCreateBinary();
+	if (xSemaphoreMAIN == NULL)
+	printf("falha em criar o semaforo \n");
+	
+	xSemaphoreCONFIG = xSemaphoreCreateBinary();
+	if (xSemaphoreCONFIG == NULL)
+	printf("falha em criar o semaforo \n");
 	
 	/* Start the scheduler. */
 	vTaskStartScheduler();
