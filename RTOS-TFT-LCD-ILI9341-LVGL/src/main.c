@@ -22,7 +22,7 @@ LV_FONT_DECLARE(dseg60);
 #define MAG_PIO_IDX_MASK  (1u << MAG_PIO_IDX)
 
 QueueHandle_t xQueueMAG;
-QueueHandle_t xQueueBIKE;
+
 float RADIUS = 0.254;
 
 static void MAG_init(void);
@@ -33,8 +33,9 @@ typedef struct
 {
 	float velocity;
 	float previus_velocity;
-	char acceleration;
+	char * acceleration;
 	float avg_velocity;
+	float previus_avg_velocity;
 	float distance;
 } bike_t;
 
@@ -84,6 +85,8 @@ static  lv_obj_t * labelPlay;
 static  lv_obj_t * labelPause;
 static  lv_obj_t * labelRefresh;
 static  lv_obj_t * config;
+static	lv_obj_t * labelAc;
+
 lv_obj_t * km_h;
 lv_obj_t * btn2;
 lv_obj_t * btn3;
@@ -239,8 +242,7 @@ static void handler_play(lv_event_t * e) {
 
 	if(code == LV_EVENT_CLICKED) {
 		printf("Aqui entrou no play\n");
-		state = PLAY;
-		lv_color_t color = lv_color_make(0, 255, 0);
+		state = PLAY;		lv_color_t color = lv_color_make(0, 255, 0);
 		lv_obj_set_style_text_color(play, color, LV_STATE_DEFAULT);
 		lv_obj_set_style_text_color(pause, lv_color_white(), LV_STATE_DEFAULT);
 	
@@ -279,7 +281,7 @@ static void handler_config(lv_event_t * e){
 
 	if(code == LV_EVENT_CLICKED) {
 		lv_obj_clean(lv_scr_act());
-		lv_config();
+		//lv_config();
 	}
 }
 
@@ -365,7 +367,14 @@ void lv_ex_btn_1(void) {
 	lv_obj_set_style_text_font(labelClock, &dseg30, LV_STATE_DEFAULT);
 	lv_obj_set_style_text_color(labelClock, lv_color_white(), LV_STATE_DEFAULT);
 	lv_label_set_text_fmt(labelClock, "%02d:%02d:%02d", 0, 0 ,0);
-
+	
+	labelAc = lv_label_create(lv_scr_act());
+	lv_obj_align(labelAc, LV_ALIGN_TOP_LEFT, 10 , 0);
+	lv_style_set_text_font(&style, &lv_font_montserrat_24);
+	lv_obj_add_style(labelAc, &style, 0);
+	lv_obj_set_style_text_color(labelAc, lv_color_white(), LV_STATE_DEFAULT);
+	lv_label_set_text_fmt(labelAc, "%s", "----");
+	
 	/* Velocidade grande */
 	labelVelocidadeAtual = lv_label_create(lv_scr_act());
 	lv_obj_align(labelVelocidadeAtual, LV_ALIGN_LEFT_MID, 10 , -65);
@@ -487,7 +496,10 @@ static void task_lcd(void *pvParameters) {
 	uint32_t current_hour, current_min, current_sec;
 	rtc_get_time(RTC, &current_hour, &current_min, &current_sec);
 	lv_ex_btn_1();
-
+	state = PAUSE;
+	lv_color_t color = lv_color_make(0, 255, 0);
+	lv_obj_set_style_text_color(pause, color, LV_STATE_DEFAULT);
+	
 	for (;;)  {
 		lv_tick_inc(50);
 		lv_task_handler();
@@ -502,16 +514,15 @@ static void task_mag(void *pvParameters)
 	
 	uint32_t ul_previous_time;
 	bike_t bike;
-	state = PLAY;
 	//static enum state_t state;
 	bike.velocity = 0;
 	bike.previus_velocity = 0;
 	bike.avg_velocity = 0;
+	bike.previus_avg_velocity;
 	bike.distance = 0;
 	uint32_t pulses = 0;
 	float total_period = 0;
-	float vel_diff;
-	float sensibility = 0.5;
+	float sensibility = 1;
 	
 	for (;;)
 	{
@@ -529,32 +540,38 @@ static void task_mag(void *pvParameters)
 					
 					bike.previus_velocity = bike.velocity;
 					
-					bike.velocity = 2 * PI * frequency * RADIUS / 1000;
+					bike.velocity = ceil(2 * PI * frequency * RADIUS / 1000);
 					
 					bike.distance = 2 * PI * RADIUS * pulses / 1000;
-					bike.avg_velocity = bike.distance / total_period;
+					bike.previus_avg_velocity = bike.avg_velocity;
+					bike.avg_velocity = ceil(bike.distance / total_period);
 					
-					vel_diff = bike.velocity - bike.previus_velocity;
-					bike.acceleration = 0;
+					bike.acceleration = "----";
 					
-					if (vel_diff > sensibility)
-					{
-						bike.acceleration = 1;
-					}
-					else if (vel_diff < (sensibility * -1))
-					{
-						bike.acceleration = -1;
-					}
-					
-					printf("Velocity: %.3f, Previous velocity: %.3f, Avg velocity: %.3f, Distance: %.3f, Tempo total: %.1f, Acceleration: %d\n\n", bike.velocity, bike.previus_velocity, bike.avg_velocity, bike.distance, total_period, bike.acceleration);
 					if (flag_v){// flag_v = 1 -> velocidade média
+						if (bike.avg_velocity > bike.previus_avg_velocity)
+						{
+							bike.acceleration = "Aum";
+						}
+						else if (bike.avg_velocity < bike.previus_avg_velocity)
+						{
+							bike.acceleration = "Dim";
+						}
 						lv_label_set_text_fmt(labelVelocidadeAtual, "%02d", (int) bike.avg_velocity);
 					}else{// flag_v = 0 -> velocidade atual
+						if (bike.velocity > bike.previus_velocity)
+						{
+							bike.acceleration = "Aum";
+						}
+						else if (bike.velocity < bike.previus_velocity)
+						{
+							bike.acceleration = "Dim";
+						}
 						lv_label_set_text_fmt(labelVelocidadeAtual, "%02d", (int) bike.velocity);
 					}
 					int aux = (int) 100*bike.distance;
 					lv_label_set_text_fmt(labelDistancia, "%02d.%02d km",(int)bike.distance,(aux%100));
-
+					lv_label_set_text_fmt(labelAc, "%s", bike.acceleration);
 
 				}
 				break;
@@ -569,6 +586,8 @@ static void task_mag(void *pvParameters)
 				pulses = 0;
 				total_period = 0;
 				state = PAUSE;
+				lv_color_t color = lv_color_make(0, 255, 0);
+				lv_obj_set_style_text_color(pause, color, LV_STATE_DEFAULT);
 				s = 0;
 				min = 0;
 				h = 0;
@@ -580,8 +599,6 @@ static void task_mag(void *pvParameters)
 			default:
 				printf("Estado invalido!\n");
 		}
-		
-		xQueueSend(xQueueBIKE, &bike, 0);
 	}
 }
 
@@ -745,10 +762,6 @@ int main(void) {
 	xQueueMAG = xQueueCreate(32, sizeof(uint32_t));
 	if (xQueueMAG == NULL)
 		printf("falha em criar a queue do handler do sensor magnetico");
-	
-	xQueueBIKE = xQueueCreate(32, sizeof(bike_t));
-	if (xQueueBIKE == NULL)
-		printf("falha em criar a queue dos dados da bike");
 
 	/* Create task to control oled */
 	if (xTaskCreate(task_lcd, "LCD", TASK_LCD_STACK_SIZE, NULL, TASK_LCD_STACK_PRIORITY, NULL) != pdPASS) {
