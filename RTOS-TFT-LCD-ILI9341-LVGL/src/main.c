@@ -23,8 +23,6 @@ LV_FONT_DECLARE(dseg60);
 
 QueueHandle_t xQueueMAG;
 
-volatile float RADIUS = 0.254;
-
 static void MAG_init(void);
 static void task_mag(void *pvParameters);
 static void mag_callback(void);
@@ -76,27 +74,30 @@ static lv_indev_drv_t indev_drv;
 
 /* Global */
 
-lv_obj_t * labelVelocidadeAtual;
-lv_obj_t * labelVelocidade2;
-lv_obj_t * labelDiametro;
-lv_obj_t * labelDiamentroUp;
-
+static  lv_obj_t * labelVelocidadeAtual;
+static  lv_obj_t * labelVelocidade2;
 static  lv_obj_t * labelClock;
 static  lv_obj_t * labelTime;
 static  lv_obj_t * labelDistancia;
 static  lv_obj_t * labelPlay;
 static  lv_obj_t * labelPause;
 static  lv_obj_t * labelRefresh;
-static  lv_obj_t * config;
+static  lv_obj_t * labelRaio;
 static	lv_obj_t * labelAc;
-static  lv_obj_t * labelButDiameterUp;
-
-lv_obj_t * km_h;
-lv_obj_t * btn2;
-lv_obj_t * btn3;
-lv_obj_t * play ;
-lv_obj_t * pause;
-lv_obj_t * refresh;
+static  lv_obj_t * config;
+static  lv_obj_t * inicio;
+static  lv_obj_t * labelInit;
+static  lv_obj_t * km_h;
+static  lv_obj_t * btn2;
+static  lv_obj_t * btn3;
+static  lv_obj_t * play ;
+static  lv_obj_t * pause;
+static  lv_obj_t * refresh;
+static  lv_obj_t * btnRaioUp;
+static  lv_obj_t * labelBtnRaioUp;
+static  lv_obj_t * btnRaioDown;
+static  lv_obj_t * labelBtnRaioDown;
+static  lv_obj_t * raio;
 
 volatile int flag_v = 0; // 0 -> atual ; 1 -> média
 volatile int s = 50;
@@ -104,7 +105,9 @@ volatile int min = 0;
 volatile int h = 0;
 volatile int minuto = 0;
 volatile int hora = 0;
+volatile float RADIUS = 0.254;
 enum state_t state;
+volatile char page_config = 0;
 
 /************************************************************************/
 /* RTOS                                                                 */
@@ -145,7 +148,11 @@ void RTC_Handler(void) {
     if ((ul_status & RTC_SR_SEC) == RTC_SR_SEC) {	
 	// o código para irq de segundo vem aqui
 	printf("ENTROU AQUI UAIS?");
-	lv_label_set_text_fmt(labelClock, "%02d:%02d:%02d", current_hour, current_min ,current_sec);
+	if (!page_config)
+	{
+		lv_label_set_text_fmt(labelClock, "%02d:%02d:%02d", current_hour, current_min ,current_sec);
+	}
+	
 	if (state == PLAY){
 		s++;
 		if (s>=60){
@@ -181,6 +188,7 @@ static void handler_main(lv_event_t * e) {
 	lv_event_code_t code = lv_event_get_code(e);
 
 	if(code == LV_EVENT_CLICKED) {
+		page_config = 0;
 		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 		xSemaphoreGiveFromISR(xSemaphoreMAIN, &xHigherPriorityTaskWoken);
 	}
@@ -198,14 +206,6 @@ static void handler_v_med(lv_event_t * e) {
 		ul_previous_time = rtt_read_timer_value(RTT);
 		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 		xQueueSendFromISR(xQueueMAG, &ul_previous_time, xHigherPriorityTaskWoken);
-		//if (!flag_v){
-
-		//	flag_v = 1;
-		//}else{
-		//	flag_v = 0;
-		//	lv_obj_set_style_text_color(btn2, lv_color_white(), LV_STATE_DEFAULT);
-
-		//}
 
 	}
 	else if(code == LV_EVENT_VALUE_CHANGED) {
@@ -224,14 +224,6 @@ static void handler_v_now(lv_event_t * e) {
 		ul_previous_time = rtt_read_timer_value(RTT);
 		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 		xQueueSendFromISR(xQueueMAG, &ul_previous_time, xHigherPriorityTaskWoken);
-			//flag_v = 1;
-		//if (!flag_v){
-		//}else{
-		//	flag_v = 0;
-		//	lv_obj_set_style_text_color(btn3, lv_color_white(), LV_STATE_DEFAULT);
-
-		//}
-
 	}
 	else if(code == LV_EVENT_VALUE_CHANGED) {
 		LV_LOG_USER("Toggled");
@@ -243,7 +235,8 @@ static void handler_play(lv_event_t * e) {
 
 	if(code == LV_EVENT_CLICKED) {
 		printf("Aqui entrou no play\n");
-		state = PLAY;		lv_color_t color = lv_color_make(0, 255, 0);
+		state = PLAY;
+		lv_color_t color = lv_color_make(0, 255, 0);
 		lv_obj_set_style_text_color(play, color, LV_STATE_DEFAULT);
 		lv_obj_set_style_text_color(pause, lv_color_white(), LV_STATE_DEFAULT);
 	
@@ -278,6 +271,7 @@ static void handler_config(lv_event_t * e){
 	lv_event_code_t code = lv_event_get_code(e);
 
 	if(code == LV_EVENT_CLICKED) {
+		page_config = 1;
 		BaseType_t xHigherPriorityTaskWoken = pdFALSE;
 		xSemaphoreGiveFromISR(xSemaphoreCONFIG, &xHigherPriorityTaskWoken);
 	}
@@ -287,8 +281,9 @@ static void handler_up_radius(lv_event_t * e){
 	lv_event_code_t code = lv_event_get_code(e);
 
 	if(code == LV_EVENT_CLICKED) {
-		RADIUS = RADIUS + 0.0005;
-		lv_label_set_text_fmt(labelDiametro, "%.3f", RADIUS * 2);
+		RADIUS = RADIUS + 0.001;
+		int r = RADIUS * 1000;
+		lv_label_set_text_fmt(labelRaio, "%d", r);
 	}
 }
 
@@ -296,8 +291,9 @@ static void handler_down_radius(lv_event_t * e){
 	lv_event_code_t code = lv_event_get_code(e);
 
 	if(code == LV_EVENT_CLICKED) {
-		RADIUS = RADIUS - 0.0005;
-		lv_label_set_text_fmt(labelDiametro, "%.3f", RADIUS * 2);
+		RADIUS = RADIUS - 0.001;
+		int r = RADIUS * 1000;
+		lv_label_set_text_fmt(labelRaio, "%d", r);
 	}
 }
 
@@ -311,6 +307,54 @@ static void mag_callback(void)
 
 static void lv_config(void){
 	
+	lv_style_t style_config;
+	lv_style_init(&style_config);
+	lv_style_set_bg_color(&style_config, lv_color_black());
+	
+	inicio = lv_btn_create(lv_scr_act());
+	lv_obj_add_event_cb(inicio, handler_main, LV_EVENT_ALL, NULL);
+	lv_obj_align(inicio, LV_ALIGN_TOP_LEFT, 10 , 10);
+	
+	lv_obj_set_height(inicio, LV_SIZE_CONTENT);
+	lv_obj_set_size(inicio, 70, 30);
+	
+	labelInit = lv_label_create(inicio);
+	lv_label_set_text(labelInit, "Inicio");
+	lv_obj_center(labelInit);
+	
+	labelRaio = lv_label_create(lv_scr_act());
+	lv_obj_align(labelRaio, LV_ALIGN_TOP_MID, 0, 80);
+	
+	lv_obj_set_style_text_font(labelRaio, &dseg70, LV_STATE_DEFAULT);
+	lv_obj_set_style_text_color(labelRaio, lv_color_white(), LV_STATE_DEFAULT);
+	int r = RADIUS * 1000;
+	lv_label_set_text_fmt(labelRaio, "%03d", r);
+	
+	btnRaioUp = lv_btn_create(lv_scr_act());
+	lv_obj_add_event_cb(btnRaioUp, handler_up_radius, LV_EVENT_ALL, NULL);
+	lv_obj_align_to(btnRaioUp, labelRaio, LV_ALIGN_OUT_BOTTOM_RIGHT, -30, 20);
+	lv_obj_set_height(btnRaioUp, LV_SIZE_CONTENT);
+	lv_obj_set_size(btnRaioUp, 40, 40);
+	labelBtnRaioUp = lv_label_create(btnRaioUp);
+	lv_label_set_text(labelBtnRaioUp, "[  " LV_SYMBOL_UP " ]");
+	lv_obj_center(labelBtnRaioUp);
+	
+	btnRaioDown = lv_btn_create(lv_scr_act());
+	lv_obj_add_event_cb(btnRaioDown, handler_down_radius, LV_EVENT_ALL, NULL);
+	lv_obj_align_to(btnRaioDown, labelRaio, LV_ALIGN_OUT_BOTTOM_LEFT, 30, 20);
+	lv_obj_set_height(btnRaioDown, LV_SIZE_CONTENT);
+	lv_obj_set_size(btnRaioDown, 40, 40);
+	labelBtnRaioDown = lv_label_create(btnRaioDown);
+	lv_label_set_text(labelBtnRaioDown, "[  " LV_SYMBOL_DOWN " ]");
+	lv_obj_center(labelBtnRaioDown);
+	
+	raio = lv_label_create(lv_scr_act());
+	lv_obj_align_to(raio,labelRaio, LV_ALIGN_OUT_LEFT_TOP, 30,-30);
+	lv_style_set_text_font(&style_config, &lv_font_montserrat_24);
+	lv_obj_add_style(raio, &style_config, 0);
+	lv_obj_set_style_text_color(raio, lv_color_white(), LV_STATE_DEFAULT);
+	lv_label_set_text_fmt(raio, "Raio (mm)");
+	
 }
 
 void lv_ex_btn_1(void) {
@@ -319,17 +363,7 @@ void lv_ex_btn_1(void) {
 	lv_style_init(&style);
 	lv_style_set_bg_color(&style, lv_color_black());
 	
-	lv_obj_t * label;
-
-	
-	// lv_obj_t * btn1 = lv_btn_create(lv_scr_act());
-	// lv_obj_add_event_cb(btn1, event_handler, LV_EVENT_ALL, NULL);
-	// lv_obj_align(btn1, LV_ALIGN_BOTTOM_LEFT, 0, -40);
-
-	// label = lv_label_create(btn1);
-	// lv_label_set_text(label, "Corsi");
-	// lv_obj_center(label);
-	/* hora */
+	static lv_obj_t * label;
 	
 	labelClock = lv_label_create(lv_scr_act());
 	lv_obj_align(labelClock, LV_ALIGN_TOP_RIGHT, 0 , 0);
@@ -378,10 +412,11 @@ void lv_ex_btn_1(void) {
 	
 	btn2 = lv_btn_create(lv_scr_act());
 	lv_obj_add_event_cb(btn2, handler_v_med, LV_EVENT_ALL, NULL);
-	lv_obj_align_to(btn2, labelClock, LV_ALIGN_BOTTOM_MID, 0, 40);
+	lv_obj_align_to(btn2, labelClock, LV_ALIGN_BOTTOM_MID, 0, 50);
 	//lv_obj_add_flag(btn2, LV_OBJ_FLAG_CHECKABLE);
 	lv_obj_set_height(btn2, LV_SIZE_CONTENT);
-
+	lv_obj_set_size(btn2, 70, 30);
+	
 	label = lv_label_create(btn2);
 	lv_label_set_text(label, "Vmed");
 	lv_obj_center(label);
@@ -389,9 +424,11 @@ void lv_ex_btn_1(void) {
 	/*Velocidade atual*/
 	btn3 = lv_btn_create(lv_scr_act());
 	lv_obj_add_event_cb(btn3, handler_v_now, LV_EVENT_ALL, NULL);
-	lv_obj_align_to(btn3, labelClock, LV_ALIGN_BOTTOM_MID, 0, 80);
+	lv_obj_align_to(btn3, labelClock, LV_ALIGN_BOTTOM_MID, 0, 100);
 	//lv_obj_add_flag(btn3, LV_OBJ_FLAG_CHECKABLE);
 	lv_obj_set_height(btn3, LV_SIZE_CONTENT);
+	lv_obj_set_size(btn3, 70, 30);
+	
 	lv_color_t color = lv_color_make(0, 255, 0);
 	lv_obj_set_style_text_color(btn3, color, LV_STATE_DEFAULT);
 	label = lv_label_create(btn3);
@@ -401,10 +438,11 @@ void lv_ex_btn_1(void) {
 	/* Config */
 	config = lv_btn_create(lv_scr_act());
 	lv_obj_add_event_cb(config, handler_config, LV_EVENT_ALL, NULL);
-	lv_obj_align_to(config, labelClock, LV_ALIGN_BOTTOM_MID, 0, 120);
+	lv_obj_align_to(config, labelClock, LV_ALIGN_BOTTOM_MID, 0, 150);
 	
 	//lv_obj_add_flag(btn2, LV_OBJ_FLAG_CHECKABLE);
 	lv_obj_set_height(config, LV_SIZE_CONTENT);
+	lv_obj_set_size(config, 70, 30);
 
 	label = lv_label_create(config);
 	lv_label_set_text(label, "Config");
@@ -449,10 +487,6 @@ void lv_ex_btn_1(void) {
 	labelRefresh = lv_label_create(refresh);
 	lv_label_set_text(labelRefresh, "[ " LV_SYMBOL_REFRESH " ]");
 	lv_obj_center(labelRefresh);
-
-		
-		
-
 }
 
 /************************************************************************/
@@ -476,11 +510,15 @@ static void task_lcd(void *pvParameters) {
 		if (xSemaphoreTake(xSemaphoreMAIN, 50))
 		{
 			lv_obj_clean(lv_scr_act());
+			vTaskDelay(50);
 			lv_ex_btn_1();
+			lv_obj_set_style_text_color(pause, color, LV_STATE_DEFAULT);
+			state = PAUSE;
 		}
 		if (xSemaphoreTake(xSemaphoreCONFIG, 50))
 		{
 			lv_obj_clean(lv_scr_act());
+			vTaskDelay(50);
 			lv_config();
 		}
 		lv_tick_inc(50);
